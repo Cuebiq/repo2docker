@@ -156,6 +156,14 @@ USER root
 COPY src/ ${REPO_DIR}
 RUN chown -R ${NB_USER}:${NB_USER} ${REPO_DIR}
 
+# extra folder outside home dire
+RUN mkdir -p /home/bin && chown -R ${NB_USER}:${NB_USER} /home/bin
+RUN mkdir -p /home/extra && chown -R ${NB_USER}:${NB_USER} /home/extra
+ENV PATH /home/bin:${PATH}
+RUN cp -r bin/* /home/bin 2>/dev/null || :
+RUN rm -rf bin/
+
+
 # Run assemble scripts! These will actually turn the specification
 # in the repository into an image.
 {% for sd in assemble_script_directives -%}
@@ -168,6 +176,16 @@ RUN chown -R ${NB_USER}:${NB_USER} ${REPO_DIR}
 {% for k, v in labels|dictsort %}
 LABEL {{k}}="{{v}}"
 {%- endfor %}
+
+# Run script as root
+{% if root_script -%}
+# Make sure that root scripts are marked executable before executing them
+{% for s in root_script -%}
+RUN cp "{{ s }}" /usr/local/bin/root
+RUN chmod +x /usr/local/bin/root
+RUN /usr/local/bin/root
+{% endfor %}
+{% endif -%}
 
 # We always want containers to run as non-root
 USER ${NB_USER}
@@ -182,9 +200,14 @@ RUN ./{{ s }}
 
 # Add start script
 {% if start_script is not none -%}
-RUN chmod +x "{{ start_script }}"
-ENV R2D_ENTRYPOINT "{{ start_script }}"
+USER root
+RUN cp "{{ start_script }}" /usr/local/bin/start
+RUN chmod +x /usr/local/bin/start
+ENV R2D_ENTRYPOINT /usr/local/bin/start
+USER ${NB_USER}
 {% endif -%}
+
+
 
 # Add entrypoint
 COPY /repo2docker-entrypoint /usr/local/bin/repo2docker-entrypoint
@@ -482,6 +505,21 @@ class BuildPack:
         """
         return None
 
+    def get_root_script(self):
+        """
+        The path to a script to be executed at container start up.
+
+        This script is added as the `ENTRYPOINT` to the container.
+
+        It is run as a non-root user, and must be executable. Used for
+        performing run time steps that can not be performed with standard
+        tools. For example setting environment variables for your repository.
+
+        The script should be as deterministic as possible - running it twice
+        should not produce different results.
+        """
+        return None
+
     @property
     def binder_dir(self):
         has_binder = os.path.isdir("binder")
@@ -568,6 +606,7 @@ class BuildPack:
             base_packages=sorted(self.get_base_packages()),
             post_build_scripts=self.get_post_build_scripts(),
             start_script=self.get_start_script(),
+            root_script=self.get_root_script(),
             appendix=self.appendix,
         )
 
@@ -812,3 +851,9 @@ class BaseImage(BuildPack):
             # the only path evaluated at container start time rather than build time
             return os.path.join("${REPO_DIR}", start)
         return None
+
+    def get_root_script(self):
+        post_build = self.binder_path("root")
+        if os.path.exists(post_build):
+            return [post_build]
+        return []
