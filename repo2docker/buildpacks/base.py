@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from traitlets import Dict
 
 TEMPLATE = r"""
-FROM buildpack-deps:bionic
+FROM jupyter/minimal-notebook:5cb007f03275
 
 # avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
